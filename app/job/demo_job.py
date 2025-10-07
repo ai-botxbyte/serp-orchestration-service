@@ -42,14 +42,3 @@ class DemoJob(BaseAppJob):
             finally:
                 await session.close()
     
-    
-    async def handle_error(self,  message: DemoOrchestrationMessageSchema, error: Exception) -> None:
-        """
-        Custom error handling for demo processing
-        """
-        logger.error(f"Failed to process demo message: {message.data}")
-        raise JobDemoServiceException(
-            job_name=self.__class__.__name__,
-            service_name="DemoService",
-            service_error=str(error)
-        ) from error

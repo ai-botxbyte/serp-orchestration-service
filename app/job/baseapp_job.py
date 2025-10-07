@@ -23,15 +23,6 @@ class BaseAppJob(ABC):
         """
 
     
-    async def handle_error(self,  message: Any, error: Exception) -> None:
-        """
-        Handle processing errors - Can be overridden by subclasses
-        """
-        logger.error(f"Error processing message in {self.job_name}: {error}")
-        logger.error(f"Failed message: {message}")
-        # Re-raise to let consumer handle dead letter queue
-        raise error
-        
     
     async def execute(self,  message: Any) -> None:
         """
@@ -46,7 +37,9 @@ class BaseAppJob(ABC):
             
         except (ValueError, TypeError, AttributeError, RuntimeError) as e:
             logger.error(f"Job {self.job_name} failed: {e}")
-            await self.handle_error(message=message, error=e)
+            logger.error(f"Failed message: {message}")
+            # Re-raise to let consumer handle dead letter queue
+            raise e
             
         finally:
             self.start_time = None
