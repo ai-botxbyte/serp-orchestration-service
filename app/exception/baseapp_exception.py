@@ -1,15 +1,16 @@
 from typing import Optional
-# [] HTTPException = Exception and we need make some changes to it right? 
-# What about : BaseConsumerException as a file name?
-from fastapi import HTTPException, status
+from fastapi import status
 
 
-class BaseAppException(HTTPException):
-    """Base exception for all application errors."""
+class BaseAppException(Exception):
+    """Domain-level base exception for application/consumer code (not tied to HTTP)."""
 
-    def __init__(self, message: str, status_code: int = status.HTTP_400_BAD_REQUEST):
-        super().__init__(status_code=status_code, detail=message)
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
 
+    
 
 class NotFoundException(BaseAppException):
     """Exception raised when a resource is not found."""

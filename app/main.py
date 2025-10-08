@@ -1,17 +1,17 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
-from app.config.config import config
+from app.config.config import get_config
 # from app.config.logger_config import configure_logging
 from app.api.v1.router import api_router
 from app.middleware.correlation import CorrelationIdMiddleware
-from app.exception.fastapi.error_handlers import setup_error_handlers
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     # configure_logging()
+
+    config = get_config()
 
     app = FastAPI(
         title=config.APP_NAME,
@@ -26,10 +26,10 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationIdMiddleware)
     
     # Setup custom error handlers
-    setup_error_handlers(app)
+    # setup_error_handlers(app)
 
     # Include API routes
-    app.include_router(router=api_router, prefix="/api/v1")
+    app.include_router(router=api_router, prefix="/demo-management/api/v1")
     
     # Mount static files for media
 

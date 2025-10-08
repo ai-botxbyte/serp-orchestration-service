@@ -39,7 +39,9 @@ async def main():
         # Connect and start consuming
         await consumer.connect()
         consume_task = asyncio.create_task(consumer.start_consuming())
-        # [] Shall we make shutdown_task only at local level? Because in kubernetes we can't shutdown this way.
+        # [ ] Shall we make shutdown_task only at local level? Because in kubernetes we can't shutdown this way.
+        
+        # [x] for graceful shutdown is not only correct but is exactly the recommended pattern for # services running in Kubernetes.
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         
         # Wait for either completion or shutdown

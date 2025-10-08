@@ -97,7 +97,10 @@ class DemoConsumer(BaseAppConsumer):
                 
             # Consumer continues running - no exceptions raised!
     
-    # [] Shall we ignore this function? or is it possible at the schema level end? 
+    # [ ] Shall we ignore this function? or is it possible at the schema level end? 
+    # [x] This function acts as a gatekeeper, ensuring that only valid data is
+    # passed to the job processor. It separates the concern of validation
+    # from the business logic.
     def _validate_message(self, message_data: dict) -> DemoOrchestrationMessageSchema:
         """
         Validate log message using DemoOrchestrationMessageSchema with built-in business rules

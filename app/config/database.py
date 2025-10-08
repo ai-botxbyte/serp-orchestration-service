@@ -1,13 +1,15 @@
 from typing import Iterator
 from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from app.config.config import config
+from app.config.config import get_config
 from sqlalchemy.orm import sessionmaker as orm_sessionmaker
 
 
 # Import Base so model metadata is available (used by Alembic / create_all)
+config = get_config()
 
 engine = create_engine(config.DATABASE_URL, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
@@ -43,8 +45,10 @@ def get_db() -> Iterator:
     finally:
         db.close()
 
-# [] I am confused about this function - is it required? May be - Yes.
-async def get_async_db() -> Generator:
+# [ ] I am confused about this function - is it required? May be - Yes.
+# [x] Yes it's required. 
+
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
     """Yield an AsyncSession for use in async endpoints/dependencies.
     
     Uses read replica if USE_READ_REPLICA config is True, otherwise uses primary database.
@@ -55,5 +59,3 @@ async def get_async_db() -> Generator:
     else:
         async with AsyncSessionLocal() as session:
             yield session
-
-
