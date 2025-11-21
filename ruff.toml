@@ -1,0 +1,200 @@
+# Ruff Configuration for Demo Management Service
+# See: https://docs.astral.sh/ruff/
+# Aligned with .pylintrc configuration
+
+# ==================== Basic Settings ====================
+target-version = "py311"
+line-length = 88
+indent-width = 4
+
+# ==================== File Selection ====================
+extend-exclude = [
+    "__pycache__",
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "build",
+    "dist",
+    "*.egg-info",
+    ".pytest_cache",
+    ".ruff_cache",
+    "alembic",  # Exclude entire alembic directory (matches .pylintrc)
+    "alembic/versions",  # Exclude auto-generated migration files
+    "app/media",  # Exclude media files
+    "docs",  # Exclude docs directory (matches .pylintrc)
+    "app/templates",  # Exclude templates (matches .pylintrc)
+    "README.md",  # Exclude README (matches .pylintrc)
+    "Dockerfile",  # Exclude Dockerfile (matches .pylintrc)
+    "alembic.ini",  # Exclude alembic.ini (matches .pylintrc)
+]
+
+# ==================== Linting Configuration ====================
+[lint]
+# Enable specific rule sets
+select = [
+    # Pyflakes
+    "F",
+    # pycodestyle (errors and warnings)
+    "E",
+    "W",
+    # isort (import sorting)
+    "I",
+    # pydocstyle (docstring conventions)
+    "D",
+    # pyupgrade (Python version-specific improvements)
+    "UP",
+    # flake8-bugbear (design problems)
+    "B",
+    # flake8-simplify (simplification suggestions)
+    "SIM",
+    # flake8-comprehensions (better comprehensions)
+    "C4",
+    # flake8-pytest-style
+    "PT",
+    # flake8-return (better return statements)
+    "RET",
+    # flake8-use-pathlib
+    "PTH",
+    # flake8-quotes
+    "Q",
+    # flake8-annotations (type annotations)
+    "ANN",
+    # flake8-async (async best practices)
+    "ASYNC",
+    # flake8-bandit (security issues)
+    "S",
+    # flake8-boolean-trap (boolean parameters)
+    "FBT",
+    # flake8-datetimez (timezone-aware datetime)
+    "DTZ",
+    # flake8-logging-format
+    "G",
+    # flake8-pie (misc lints)
+    "PIE",
+    # flake8-self (private member access)
+    "SLF",
+    # Ruff-specific rules
+    "RUF",
+    # Pylint
+    "PL",
+    # flake8-commas (trailing commas)
+    "COM",
+    # flake8-implicit-str-concat
+    "ISC",
+    # flake8-future-annotations
+    "FA",
+    # tryceratops (exception handling)
+    "TRY",
+    # flake8-raise (better raise statements)
+    "RSE",
+]
+
+# Disable specific rules that conflict with your custom conventions
+# Aligned with .pylintrc disabled rules
+ignore = [
+    # Docstring rules (matching pylint: missing-module-docstring)
+    "D100",  # Missing docstring in public module
+    "D101",  # Missing docstring in public class
+    "D102",  # Missing docstring in public method
+    "D103",  # Missing docstring in public function
+    "D104",  # Missing docstring in public package
+    "D105",  # Missing docstring in magic method
+    "D107",  # Missing docstring in __init__
+    "D203",  # 1 blank line required before class docstring (conflicts with D211)
+    "D213",  # Multi-line docstring summary should start at the second line (conflicts with D212)
+    
+    # Whitespace rules (matching pylint: trailing-whitespace, missing-final-newline)
+    "W291",  # Trailing whitespace
+    "W292",  # No newline at end of file
+    "W293",  # Blank line contains whitespace
+    
+    # Annotation rules (since FastAPI handles many type checks at runtime)
+    "ANN003",  # Missing type annotation for **kwargs
+    "ARG001",  # Unused function argument (matching pylint: unused-argument)
+    "ARG002",  # Unused method argument (matching pylint: unused-argument)
+    
+    # Complexity rules (matching pylint: too-many-arguments, too-many-positional-arguments)
+    "PLR0913", # Too many arguments to function call
+    "PLR2004", # Magic value used in comparison
+    
+    # Other rules that might be too strict for FastAPI projects
+    "TRY003",  # Avoid specifying long messages outside the exception class
+    "S101",    # Use of assert detected (needed for tests)
+    "S104",    # Possible binding to all interfaces
+    "B008",    # Do not perform function call in argument defaults (FastAPI uses Depends)
+    "RUF012",  # Mutable class attributes should be annotated with typing.ClassVar
+    "FBT001",  # Boolean positional arg in function definition (handled by custom plugin)
+    "FBT002",  # Boolean default value in function definition (handled by custom plugin)
+    
+    # These are handled by custom pylint plugins
+    "SIM108",  # Use ternary operator (prefer explicit if-else for clarity)
+    "UP006",   # Use `list` instead of `List` from typing (using typing for clarity)
+    "UP007",   # Use `X | Y` for type annotations (prefer Union for clarity)
+    
+    # Formatter conflicts
+    "COM812",  # Missing trailing comma (conflicts with formatter)
+    "ISC001",  # Implicitly concatenated string literals (conflicts with formatter)
+]
+
+# Allow autofix for all enabled rules (when running with --fix)
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# ==================== Per-file Ignores ====================
+[lint.per-file-ignores]
+# Test files can have additional flexibility
+"docs/test/**/*.py" = ["S101", "ANN", "D", "PLR2004"]
+"tests/**/*.py" = ["S101", "ANN", "D", "PLR2004"]
+
+# Alembic migrations can have long lines and don't need strict linting
+"alembic/versions/*.py" = ["E501", "D", "ANN"]
+"alembic/env.py" = ["D", "ANN"]
+
+# __init__.py files don't need docstrings
+"**/__init__.py" = ["D104"]
+
+# Config files might have uppercase constants
+"app/config/*.py" = ["N802", "N803", "N806"]
+
+# Main entry point
+"run.py" = ["D"]
+"app/main.py" = ["D"]
+
+# ==================== Import Sorting (isort) ====================
+[lint.isort]
+# Matching .pylintrc: known-third-party=app
+known-first-party = ["app"]
+known-third-party = ["fastapi", "pydantic", "sqlalchemy", "alembic", "uvicorn", "redis", "boto3", "httpx"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+lines-after-imports = 2
+force-wrap-aliases = true
+combine-as-imports = true
+
+# ==================== Docstring Configuration ====================
+[lint.pydocstyle]
+convention = "google"  # Use Google-style docstrings
+
+# ==================== Pylint Configuration ====================
+[lint.pylint]
+max-args = 8
+max-branches = 15
+max-returns = 6
+max-statements = 50
+
+# ==================== Formatting Configuration ====================
+[format]
+# Use double quotes for strings
+quote-style = "double"
+
+# Use spaces instead of tabs
+indent-style = "space"
+
+# Skip magic trailing comma behavior
+skip-magic-trailing-comma = false
+
+# Automatically detect the appropriate line ending
+line-ending = "auto"

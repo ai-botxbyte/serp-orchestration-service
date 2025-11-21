@@ -1,0 +1,17 @@
+// For Mac 
+// {
+//     "python.defaultInterpreterPath": "./venv/bin/python",
+//     "pylint.args": [
+//         "--rcfile=.pylintrc"
+//     ],
+// }
+
+// For Windows
+{
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.linting.pylintArgs": [
+        "--rcfile=.pylintrc"
+    ],
+    "python.defaultInterpreterPath": "./venv/Scripts/python.exe"
+}

@@ -5,23 +5,29 @@ from typing import Any, Optional
 from uuid import UUID
 from pydantic import BaseModel, model_validator
 
+
 class BaseAppSchema(BaseModel):
     """Base schema with common functionality that can be reused by all entities."""
 
-    model_config = dict(populate_by_name=True, extra="forbid")
+    model_config = {
+        "populate_by_name": True,
+        "extra": "forbid",
+        "from_attributes": True,
+    }
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def strip_strings(cls, values: Any) -> Any:
         """Strip whitespace from all string fields."""
         # If values is not a dict (e.g., SQLAlchemy object), return as-is
         if not isinstance(values, dict):
             return values
-            
+
         for field, value in values.items():
             if isinstance(value, str):
                 values[field] = value.strip()
         return values
+
 
 class TimestampSchema(BaseModel):
     """Tracks when a record was created and last updated."""

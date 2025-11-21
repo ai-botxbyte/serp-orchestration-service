@@ -1,0 +1,10 @@
+[MESSAGES CONTROL]
+disable=trailing-whitespace,missing-module-docstring,missing-final-newline,too-few-public-methods,boolean-field-rule,unused-argument,too-many-positional-arguments,too-many-arguments,no-name-in-module,duplicate-code,line-too-long
+
+ 
+[MASTER]
+known-third-party=app
+init-hook="import sys; sys.path.append('.')"
+load-plugins=pylint_plugins.model_rules_checker,pylint_plugins.schema_rules_checker,pylint_plugins.repository_rules_checker,pylint_plugins.exception_rules_checker
+
+ignore=README.md,alembic,Dockerfile,alembic.ini,docs,templates,__pycache__

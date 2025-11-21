@@ -1,37 +1,70 @@
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
+from fastapi import HTTPException, status
+from sqlalchemy.orm import sessionmaker as orm_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
+from app.config.config import config
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+# Async engine + session for use with async code (FastAPI async endpoints)
+# Note: settings.ASYNC_DATABASE_URL should be like 'postgresql+asyncpg://user:pass@host/db'
+# Only create engines if PostgreSQL is enabled for this service
+async_engine: Optional[AsyncEngine] = None
+async_session_local: Optional[orm_sessionmaker] = None
 
-from app.config.config import get_config
+async_read_replica_engine: Optional[AsyncEngine] = None
+async_read_replica_session_local: Optional[orm_sessionmaker] = None
 
+if config.IS_POSTGRES_ENABLED:
+    async_engine = create_async_engine(
+        config.ASYNC_DATABASE_URL, pool_pre_ping=True, future=True
+    )
+    async_session_local = orm_sessionmaker(
+        bind=async_engine, class_=AsyncSession, expire_on_commit=False, future=True
+    )
 
-config = get_config()
-
-# Primary Database Engine and Sessions
-async_engine = create_async_engine(
-    config.database_url, pool_pre_ping=True, echo=False, future=True
-)
-ASYNC_SESSION_LOCAL = sessionmaker(
-    autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
-)
-
-# Read Replica Database Engines and Sessions
-async_read_replica_engine = create_async_engine(
-    config.read_replica_database_url, pool_pre_ping=True, echo=False, future=True
-)
-ASYNC_READ_REPLICA_SESSION_LOCAL = sessionmaker(
-    autocommit=False, autoflush=False, bind=async_read_replica_engine, class_=AsyncSession
-)
+    # Async read replica engine + session
+    async_read_replica_engine = create_async_engine(
+        config.ASYNC_READ_DATABASE_URL, pool_pre_ping=True, future=True
+    )
+    async_read_replica_session_local = orm_sessionmaker(
+        bind=async_read_replica_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        future=True,
+    )
 
 
 async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an AsyncSession for use in async endpoints/dependencies."""
-    async with ASYNC_SESSION_LOCAL() as session:
-        yield session
+    """Yield an AsyncSession for use in async endpoints/dependencies.
 
+    Uses read replica if IS_USE_READ_REPLICA config is True, otherwise uses primary database.
 
-async def get_async_read_replica_db() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an AsyncSession for use in async endpoints/dependencies from the read replica."""
-    async with ASYNC_READ_REPLICA_SESSION_LOCAL() as session:
-        yield session
+    Raises:
+        HTTPException: If PostgreSQL is disabled for this service (503 Service Unavailable)
+    """
+    # Check if PostgreSQL is enabled for this service
+    if not config.IS_POSTGRES_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "PostgreSQL is disabled for this service. "
+                "Set IS_POSTGRES_ENABLED=True to use database operations."
+            ),
+        )
+
+    if not async_session_local:
+        raise RuntimeError(
+            "Database session not initialized. Ensure IS_POSTGRES_ENABLED=True "
+            "and database configuration is correct."
+        )
+
+    if config.IS_USE_READ_REPLICA:
+        if not async_read_replica_session_local:
+            raise RuntimeError(
+                "Read replica session not initialized. Ensure IS_POSTGRES_ENABLED=True "
+                "and read replica configuration is correct."
+            )
+        async with async_read_replica_session_local() as session:
+            yield session
+    else:
+        async with async_session_local() as session:
+            yield session

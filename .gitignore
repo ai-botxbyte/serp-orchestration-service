@@ -1,5 +1,3 @@
-ronak_test.txt
-
 # Python cache / compiled files
 __pycache__/
 *.py[cod]
@@ -7,22 +5,9 @@ __pycache__/
 
 
 # Virtual environments
-.env
-.venv
+.venv/
 venv/
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
-.cursorrules
-.cursorrules.md
-.cursorrules.txt
-.cursorrules.yml
-.cursorrules.yaml
-.cursorrules.json
-.cursorrules.jsonl
 
 # Coverage / testing
 htmlcov/
@@ -36,5 +21,21 @@ pytest_cache/
 *.py,cover
 
 # IDE / Editor settings
-.vscode/
 .idea/
+
+# macOS
+.DS_Store
+.DS_Store?
+.Spotlight-V100
+.Trashes
+
+# Environment files - DO NOT COMMIT
+.env.production
+
+# Migrations
+alembic/versions/*
+
+# Linting / Code Quality
+.ruff_cache/
+.mypy_cache/
+.pylint.d/
