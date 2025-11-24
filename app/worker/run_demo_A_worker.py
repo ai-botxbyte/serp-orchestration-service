@@ -1,3 +1,5 @@
+"""Run Demo A Worker as standalone service"""
+
 import asyncio
 import signal
 import sys
@@ -8,12 +10,11 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, project_root)
 
 from loguru import logger
-from app.consumer.demo_B_consumer import DemoBConsumer
-
+from app.worker.demo_A_worker import DemoAWorker
 
 
 async def main():
-    """Main entry point for DemoBConsumer as standalone service"""
+    """Main entry point for DemoAWorker as standalone service"""
     # Configure loguru for production
     logger.remove()
     logger.add(
@@ -22,8 +23,8 @@ async def main():
         level="INFO"
     )
     
-    # Create consumer (job is created internally)
-    consumer = DemoBConsumer()
+    # Create worker
+    worker = DemoAWorker()
     
     # Setup signal handlers for graceful shutdown
     shutdown_event = asyncio.Event()
@@ -37,11 +38,10 @@ async def main():
     
     try:
         # Connect and start consuming
-        await consumer.connect()
-        consume_task = asyncio.create_task(consumer.start_consuming())
-        # [ ] Shall we make shutdown_task only at local level? Because in kubernetes we can't shutdown this way.
+        await worker.connect()
+        consume_task = asyncio.create_task(worker.start_consuming())
         
-        # [x] for graceful shutdown is not only correct but is exactly the recommended pattern for # services running in Kubernetes.
+        # Wait for shutdown signal
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         
         # Wait for either completion or shutdown
@@ -63,22 +63,22 @@ async def main():
             try:
                 consume_task.result()
             except Exception as e:
-                logger.error(f"Demo B consumer failed: {e}")
+                logger.error(f"Demo A worker failed: {e}")
                 raise
                 
     except (ConnectionError, RuntimeError, asyncio.TimeoutError) as e:
-        logger.error(f"Demo B consumer service error: {e}")
+        logger.error(f"Demo A worker service error: {e}")
         sys.exit(1)
     finally:
-        await consumer.disconnect()
-        logger.info("Demo B Consumer service shutdown complete")
+        await worker.disconnect()
+        logger.info("Demo A Worker service shutdown complete")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Demo B Consumer interrupted by user")
+        logger.info("Demo A Worker interrupted by user")
         sys.exit(0)
     except (SystemExit, RuntimeError) as e:
         logger.error(f"Unexpected error: {e}")

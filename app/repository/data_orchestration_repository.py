@@ -1,8 +1,8 @@
 """Data Orchestration Repository"""
 
-from typing import Optional, Dict, Any
 from app.repository.baseapp_repository import BaseAppRepository
 from app.model.data_orchestration_model import DataOrchestrationModel
+from app.exception.baseapp_exception import InternalServerErrorException
 
 
 class DataOrchestrationRepository(BaseAppRepository[DataOrchestrationModel]):
@@ -11,7 +11,7 @@ class DataOrchestrationRepository(BaseAppRepository[DataOrchestrationModel]):
     def __init__(self, db):
         super().__init__(db, DataOrchestrationModel)
 
-    async def insert(self, data: DataOrchestrationModel) -> Optional[DataOrchestrationModel]:
+    async def insert(self, data: DataOrchestrationModel) -> DataOrchestrationModel:
         """
         Insert a new data orchestration record.
         
@@ -19,7 +19,10 @@ class DataOrchestrationRepository(BaseAppRepository[DataOrchestrationModel]):
             data: Dictionary containing model data
             
         Returns:
-            Created model instance or None
+            Created model instance
+            
+        Raises:
+            InternalServerErrorException: If insertion fails
         """
         try:
             record = self.model(**data)
@@ -27,5 +30,7 @@ class DataOrchestrationRepository(BaseAppRepository[DataOrchestrationModel]):
             await self.db.flush()
             await self.db.refresh(record)
             return record
-        except Exception:  # pylint: disable=broad-except
-            return None
+        except Exception as e:  # pylint: disable=broad-except
+            raise InternalServerErrorException(
+                message=f"Failed to insert data orchestration record: {str(e)}"
+            ) from e

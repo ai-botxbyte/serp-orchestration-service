@@ -78,4 +78,3 @@ class DataOrchestrationJob(BaseAppJob):
             error_message=message.error_message,
             metadata=message.metadata
         )
-
