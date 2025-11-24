@@ -12,7 +12,6 @@ import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 from loguru import logger
 
-from app.config.baseapp_config import get_base_config
 from app.schema.demo_orchestration_schema import DemoOrchestrationMessageSchema
 from app.exception.consumer_demo_exception import ConsumerDemoJobException
 
@@ -26,73 +25,48 @@ class BaseAppWorker(ABC):
         
         Args:
             queue_name: Name of the queue to consume from
-            consumer: Consumer instance for message validation
+            consumer: Consumer instance for message validation and connection management
         """
         self.queue_name = queue_name
         self.consumer = consumer
-        self.config = get_base_config()
-        self.connection: Optional[aio_pika.Connection] = None
-        self.channel: Optional[aio_pika.Channel] = None
-        self.queue: Optional[aio_pika.Queue] = None
         self.consumer_tag: Optional[str] = None
         logger.info(f"{self.__class__.__name__} initialized for queue: {queue_name}")
     
     async def connect(self) -> None:
-        """Establish connection to RabbitMQ"""
-        try:
-            self.connection = await aio_pika.connect_robust(
-                self.config.RABBITMQ_URL,
-                heartbeat=60,
-                blocked_connection_timeout=300,
-            )
-            self.channel = await self.connection.channel()
-            await self.channel.set_qos(prefetch_count=1)
-            
-            # Declare main queue
-            self.queue = await self.channel.declare_queue(
-                self.queue_name,
-                durable=True,
-                auto_delete=False,
-                arguments={
-                    "x-max-priority": 10
-                }
-            )
-            
-            # Declare data_orchestration_queue for job status (RabbitMQ Postgres connector will consume)
-            await self.channel.declare_queue(
-                "data_orchestration_queue",
-                durable=True,
-                auto_delete=False,
-                arguments={
-                    "x-max-priority": 10
-                }
-            )
-            
-            logger.info(f"Worker connected to RabbitMQ queue: {self.queue_name}")
-            
-        except Exception as e:
-            logger.error(f"Failed to connect to RabbitMQ: {e}")
-            raise
+        """Establish connection to RabbitMQ using consumer's connection"""
+        # Use consumer's connection
+        await self.consumer.connect()
+        
+        # Declare data_orchestration_queue for job status (RabbitMQ Postgres connector will consume)
+        await self.consumer.channel.declare_queue(
+            "data_orchestration_queue",
+            durable=True,
+            auto_delete=False,
+            arguments={
+                "x-max-priority": 10
+            }
+        )
+        
+        logger.info(f"Worker connected to RabbitMQ queue: {self.queue_name}")
     
     async def disconnect(self) -> None:
-        """Close RabbitMQ connection"""
-        if self.consumer_tag:
-            await self.queue.cancel(self.consumer_tag)
+        """Close RabbitMQ connection using consumer's disconnect"""
+        if self.consumer_tag and self.consumer.queue:
+            await self.consumer.queue.cancel(self.consumer_tag)
             logger.info("Worker consumer cancelled")
             
-        if self.connection and not self.connection.is_closed:
-            await self.connection.close()
-            logger.info("Worker disconnected from RabbitMQ")
+        await self.consumer.disconnect()
+        logger.info("Worker disconnected from RabbitMQ")
     
     async def start_consuming(self) -> None:
         """Start consuming messages from the queue"""
-        if not self.queue:
+        if not self.consumer.queue:
             raise RuntimeError("Queue not initialized. Call connect() first.")
         
         logger.info(f"Starting worker to consume messages from: {self.queue_name}")
         
-        # Start consuming
-        self.consumer_tag = await self.queue.consume(self.process_message)
+        # Start consuming using consumer's queue
+        self.consumer_tag = await self.consumer.queue.consume(self.process_message)
         logger.info(f"Worker started successfully for queue: {self.queue_name}")
         logger.info(f"Consumer tag: {self.consumer_tag}")
         
@@ -282,6 +256,10 @@ class BaseAppWorker(ABC):
                 - job_results: List of job execution results
         """
         try:
+            if not self.consumer.channel:
+                logger.error(f"[{trace_id}] Consumer channel not available")
+                return
+            
             metadata = {
                 "status_updated_at": datetime.utcnow().isoformat()
             }
@@ -305,7 +283,7 @@ class BaseAppWorker(ABC):
                 "metadata": metadata
             }
             
-            await self.channel.default_exchange.publish(
+            await self.consumer.channel.default_exchange.publish(
                 aio_pika.Message(
                     json.dumps(status_message).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
