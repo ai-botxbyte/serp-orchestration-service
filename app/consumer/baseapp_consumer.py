@@ -10,17 +10,15 @@ from loguru import logger
 class BaseAppConsumer(ABC):
     """Base consumer class that can be reused by all consumers following baseapp patterns"""
     
-    def __init__(self,  queue_name: str, job_processor: Callable, config: Any):
+    def __init__(self,  queue_name: str, config: Any):
         """
         Initialize the base consumer.
         """
         self.queue_name = queue_name
-        self.job_processor = job_processor
         self.config = config
         self.connection: Optional[aio_pika.Connection] = None
         self.channel: Optional[aio_pika.Channel] = None
         self.queue: Optional[aio_pika.Queue] = None
-        self.consumer_tag: Optional[str] = None
         logger.info(f"{self.__class__.__name__} initialized for queue: {queue_name}")
         
     async def connect(self) -> None:
@@ -70,16 +68,9 @@ class BaseAppConsumer(ABC):
     
     async def disconnect(self) -> None:
         """Close RabbitMQ connection"""
-        if self.consumer_tag:
-            await self.queue.cancel(self.consumer_tag)
-            logger.info("Consumer cancelled")
-            
         if self.connection and not self.connection.is_closed:
             await self.connection.close()
             logger.info("Disconnected from RabbitMQ")
-    
-    
-    
     
     @abstractmethod
     async def start_consuming(self) -> None:

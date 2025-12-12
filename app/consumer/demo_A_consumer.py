@@ -27,7 +27,6 @@ class DemoAConsumer(BaseAppConsumer):
         # Initialize with None - consumer only validates, doesn't process jobs
         super().__init__(
             queue_name="demo_A_queue",  # Queue for demo A service
-            job_processor=None,  # No job processor - validation only
             config=config
         )
         
@@ -44,9 +43,7 @@ class DemoAConsumer(BaseAppConsumer):
         logger.info(f"Starting to consume messages from: {self.queue_name}")
         
         # Start consuming and get consumer tag
-        self.consumer_tag = await self.queue.consume(self.process_message)
         logger.info(f"Consumer started successfully for queue: {self.queue_name}")
-        logger.info(f"Consumer tag: {self.consumer_tag}")
         
         # Keep the consumer running indefinitely
         try:

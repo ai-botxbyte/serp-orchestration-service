@@ -29,7 +29,6 @@ class BaseAppWorker(ABC):
         """
         self.queue_name = queue_name
         self.consumer = consumer
-        self.consumer_tag: Optional[str] = None
         logger.info(f"{self.__class__.__name__} initialized for queue: {queue_name}")
     
     async def connect(self) -> None:
@@ -51,10 +50,6 @@ class BaseAppWorker(ABC):
     
     async def disconnect(self) -> None:
         """Close RabbitMQ connection using consumer's disconnect"""
-        if self.consumer_tag and self.consumer.queue:
-            await self.consumer.queue.cancel(self.consumer_tag)
-            logger.info("Worker consumer cancelled")
-            
         await self.consumer.disconnect()
         logger.info("Worker disconnected from RabbitMQ")
     
@@ -65,10 +60,7 @@ class BaseAppWorker(ABC):
         
         logger.info(f"Starting worker to consume messages from: {self.queue_name}")
         
-        # Start consuming using consumer's queue
-        self.consumer_tag = await self.consumer.queue.consume(self.process_message)
         logger.info(f"Worker started successfully for queue: {self.queue_name}")
-        logger.info(f"Consumer tag: {self.consumer_tag}")
         
         # Keep the worker running indefinitely
         try:
