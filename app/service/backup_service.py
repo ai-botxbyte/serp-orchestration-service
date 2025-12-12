@@ -9,12 +9,6 @@ from fastapi import HTTPException, status
 from app.config.baseapp_config import get_base_config
 from app.config.logger_config import logger
 from app.helper.backup_helper import BackupHelper
-from app.schema.backup_schema import (
-    BackupCreateResponseSchema,
-    BackupListResponseSchema,
-    BackupRestoreResponseSchema,
-    BackupInfoSchema,
-)
 
 
 class BackupService:
@@ -26,7 +20,7 @@ class BackupService:
 
     async def create_backup(
         self, backup_name: Optional[str] = None, description: Optional[str] = None
-    ) -> BackupCreateResponseSchema:
+    ) -> dict:
         """
         Create a database backup and upload to Wasabi.
 
@@ -35,7 +29,7 @@ class BackupService:
             description: Optional backup description
 
         Returns:
-            BackupCreateResponseSchema with backup details
+            Dictionary with backup details
         """
         if not self.base_config.IS_POSTGRES_ENABLED:
             raise HTTPException(
@@ -55,7 +49,7 @@ class BackupService:
                 None, self.backup_helper.create_backup, backup_name, description
             )
 
-            return BackupCreateResponseSchema(**backup_metadata)
+            return backup_metadata
 
         except Exception as e:
             logger.error(f"Backup creation failed: {str(e)}", exc_info=True)
@@ -64,12 +58,12 @@ class BackupService:
                 detail=f"Failed to create backup: {str(e)}",
             ) from e
 
-    async def list_backups(self) -> BackupListResponseSchema:
+    async def list_backups(self) -> dict:
         """
         List all available backups from Wasabi.
 
         Returns:
-            BackupListResponseSchema with list of backups
+            Dictionary with list of backups
         """
         if not self.backup_helper.wasabi_helper.s3_client:
             raise HTTPException(
@@ -83,12 +77,10 @@ class BackupService:
                 None, self.backup_helper.list_backups
             )
 
-            # Convert to schema objects
-            backup_schemas = [BackupInfoSchema(**backup) for backup in backups_list]
-
-            return BackupListResponseSchema(
-                backups=backup_schemas, count=len(backup_schemas)
-            )
+            return {
+                "backups": backups_list,
+                "count": len(backups_list)
+            }
 
         except Exception as e:
             logger.error(f"Failed to list backups: {str(e)}", exc_info=True)
@@ -97,7 +89,7 @@ class BackupService:
                 detail=f"Failed to list backups: {str(e)}",
             ) from e
 
-    async def restore_backup(self, backup_filename: str) -> BackupRestoreResponseSchema:
+    async def restore_backup(self, backup_filename: str) -> dict:
         """
         Restore database from a backup file.
 
@@ -105,7 +97,7 @@ class BackupService:
             backup_filename: Name of the backup ZIP file to restore
 
         Returns:
-            BackupRestoreResponseSchema with restore details
+            Dictionary with restore details
         """
         if not self.base_config.IS_POSTGRES_ENABLED:
             raise HTTPException(
@@ -125,7 +117,7 @@ class BackupService:
                 None, self.backup_helper.restore_backup, backup_filename
             )
 
-            return BackupRestoreResponseSchema(**restore_metadata)
+            return restore_metadata
 
         except Exception as e:
             logger.error(f"Backup restore failed: {str(e)}", exc_info=True)

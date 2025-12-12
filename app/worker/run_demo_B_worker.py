@@ -1,7 +1,6 @@
 """Run Demo B Worker as standalone service"""
 
 import asyncio
-import signal
 import sys
 import os
 
@@ -26,49 +25,16 @@ async def main():
     # Create worker
     worker = DemoBWorker()
     
-    # Setup signal handlers for graceful shutdown
-    shutdown_event = asyncio.Event()
-    
-    def signal_handler(signum, _frame):
-        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
-        shutdown_event.set()
-    
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    
     try:
         # Connect and start consuming
         await worker.connect()
-        consume_task = asyncio.create_task(worker.start_consuming())
-        
-        # Wait for shutdown signal
-        shutdown_task = asyncio.create_task(shutdown_event.wait())
-        
-        # Wait for either completion or shutdown
-        done, pending = await asyncio.wait(
-            [consume_task, shutdown_task],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        
-        # Cancel pending tasks
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        
-        # Check for errors
-        if consume_task in done:
-            try:
-                consume_task.result()
-            except Exception as e:
-                logger.error(f"Demo B worker failed: {e}")
-                raise
+        await worker.start_consuming()
                 
     except (ConnectionError, RuntimeError, asyncio.TimeoutError) as e:
         logger.error(f"Demo B worker service error: {e}")
         sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Demo B Worker interrupted by user")
     finally:
         await worker.disconnect()
         logger.info("Demo B Worker service shutdown complete")

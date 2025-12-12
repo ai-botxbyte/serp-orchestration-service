@@ -10,12 +10,11 @@ from loguru import logger
 class BaseAppConsumer(ABC):
     """Base consumer class that can be reused by all consumers following baseapp patterns"""
     
-    def __init__(self,  queue_name: str, job_processor: Callable, config: Any):
+    def __init__(self,  queue_name: str, config: Any):
         """
         Initialize the base consumer.
         """
         self.queue_name = queue_name
-        self.job_processor = job_processor
         self.config = config
         self.connection: Optional[aio_pika.Connection] = None
         self.channel: Optional[aio_pika.Channel] = None
