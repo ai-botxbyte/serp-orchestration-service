@@ -124,6 +124,13 @@ class BaseAppConfig(BaseSettings):
     MIGRATION_BUCKET_NAME: str = Field(default="", env="MIGRATION_BUCKET_NAME")
     BACKUP_BUCKET_NAME: str = Field(default="", env="BACKUP_BUCKET_NAME")
 
+    # SERP Service settings
+    SERP_LAMBDA_SERVICE_URL: str = Field(
+        default="http://localhost:8000",
+        env="SERP_LAMBDA_SERVICE_URL",
+        description="URL of the SERP Lambda Service for search operations",
+    )
+
     def is_production(self) -> bool:
         """Check if running in production environment."""
         return str(self.ENV).lower() in ["production", "prod"]
