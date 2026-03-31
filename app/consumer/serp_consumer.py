@@ -148,6 +148,30 @@ class SerpConsumer:
             logger.error(f"Failed to publish to {queue_name}: {e}")
             return False
 
+    async def _safe_ack(self, msg: AbstractIncomingMessage) -> bool:
+        """Safely acknowledge a message, handling already-processed errors."""
+        try:
+            await msg.ack()
+            return True
+        except Exception as e:
+            if "already processed" in str(e).lower():
+                logger.debug(f"Message already acknowledged, skipping")
+            else:
+                logger.warning(f"Error acknowledging message: {e}")
+            return False
+
+    async def _safe_nack(self, msg: AbstractIncomingMessage, requeue: bool = True) -> bool:
+        """Safely negative acknowledge a message, handling already-processed errors."""
+        try:
+            await msg.nack(requeue=requeue)
+            return True
+        except Exception as e:
+            if "already processed" in str(e).lower():
+                logger.debug(f"Message already processed, skipping nack")
+            else:
+                logger.warning(f"Error nacking message: {e}")
+            return False
+
     def _generate_batch_id(self) -> str:
         """Generate a unique batch ID (UUID)."""
         return str(uuid.uuid4())
@@ -261,21 +285,21 @@ class SerpConsumer:
         Send successful queries to response queue one by one.
 
         Args:
-            successful_queries: List of successful query results
+            successful_queries: List of successful query results (raw from serp-lambda)
             query_message_map: Mapping of query_id to (query_data, message)
             batch_id: The batch ID
         """
         for sq in successful_queries:
             query_id = sq.get("query_id")
 
-            # Create individual response message
+            # Send the complete result - it contains all the search data
+            # The serp-lambda returns the full result object with all fields
             response_message = {
                 "success": True,
                 "query": sq.get("query"),
                 "query_id": query_id,
-                "response": sq.get("response"),
-                "data": sq.get("data"),
-                "batch_id": batch_id
+                "batch_id": batch_id,
+                **sq  # Include all fields from the search result
             }
 
             published = await self._publish_to_queue(
@@ -287,9 +311,9 @@ class SerpConsumer:
             if query_id and query_id in query_message_map:
                 _, msg = query_message_map[query_id]
                 if published:
-                    await msg.ack()
+                    await self._safe_ack(msg)
                 else:
-                    await msg.nack(requeue=True)
+                    await self._safe_nack(msg, requeue=True)
 
         logger.info(f"✓ {len(successful_queries)} successful queries sent to response queue individually")
 
@@ -330,9 +354,9 @@ class SerpConsumer:
                 )
 
                 if published:
-                    await msg.ack()
+                    await self._safe_ack(msg)
                 else:
-                    await msg.nack(requeue=True)
+                    await self._safe_nack(msg, requeue=True)
 
         logger.info(f"✗ {len(failed_queries)} failed queries sent to DLX individually")
 
@@ -361,9 +385,9 @@ class SerpConsumer:
             )
 
             if published:
-                await msg.ack()
+                await self._safe_ack(msg)
             else:
-                await msg.nack(requeue=True)
+                await self._safe_nack(msg, requeue=True)
 
         logger.info(f"✗ {len(queries)} queries sent to DLX individually")
 
@@ -380,7 +404,7 @@ class SerpConsumer:
             # Validate message has required fields
             if "query" not in message_data:
                 logger.warning(f"Message missing 'query' field, discarding")
-                await message.ack()
+                await self._safe_ack(message)
                 return
 
             # Extract query item
@@ -410,11 +434,11 @@ class SerpConsumer:
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {e}")
-            await message.ack()
+            await self._safe_ack(message)
 
         except Exception as e:
             logger.error(f"Error collecting message: {e}")
-            await message.nack(requeue=True)
+            await self._safe_nack(message, requeue=True)
 
     async def _batch_timeout_handler(self) -> None:
         """Periodically process incomplete batches after timeout."""
