@@ -1,12 +1,12 @@
 """SERP DLX Consumer - Consumes from serp_req_dlx_queue and retries to serp_req_queue.
 
 This consumer implements infinite retry logic - messages are continuously
-retried until they succeed. Handles individual query messages.
+retried until they succeed. NO delays - immediate republishing.
 """
 
 from __future__ import annotations
 
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 import json
 import asyncio
 import aio_pika
@@ -23,36 +23,37 @@ class SerpDLXConsumer:
     Consumes from: serp_req_dlx_queue (individual queries)
     Retries to: serp_req_queue (individual queries)
 
-    The SERP consumer will batch these individual queries before calling API.
-    Implements infinite retry with configurable delay.
+    IMMEDIATE processing - no delays. Collects available messages and
+    republishes them right away.
     """
 
     SERP_REQ_QUEUE = "serp_req_queue"
     SERP_REQ_DLX_QUEUE = "serp_req_dlx_queue"
 
-    def __init__(
-        self,
-        config: Any,
-        retry_delay_seconds: int = 30,
-        max_retry_delay_seconds: int = 300
-    ):
+    # Batch settings - short timeout for quick collection
+    BATCH_SIZE = 100
+    BATCH_TIMEOUT_SECONDS = 1  # Very short - just collect what's immediately available
+
+    def __init__(self, config: Any):
         """
         Initialize the SERP DLX consumer.
 
         Args:
             config: Configuration object
-            retry_delay_seconds: Initial delay between retries (default: 30 seconds)
-            max_retry_delay_seconds: Maximum delay between retries (default: 300 seconds)
         """
         self.config = config
-        self.retry_delay_seconds = retry_delay_seconds
-        self.max_retry_delay_seconds = max_retry_delay_seconds
         self.connection: Optional[aio_pika.Connection] = None
         self.channel: Optional[aio_pika.Channel] = None
         self.queue: Optional[aio_pika.Queue] = None
         self.rabbitmq_helper = RabbitMQHelper()
-        logger.info(f"{self.__class__.__name__} initialized")
-        logger.info(f"Retry delay: {retry_delay_seconds}s, Max: {max_retry_delay_seconds}s")
+
+        # Batch collection
+        self._batch: List[Dict[str, Any]] = []
+        self._batch_messages: List[AbstractIncomingMessage] = []
+        self._batch_lock = asyncio.Lock()
+        self._processing = False
+
+        logger.info(f"{self.__class__.__name__} initialized (IMMEDIATE mode - no delays)")
 
     async def connect(self) -> None:
         """Establish connection to RabbitMQ and declare all required queues."""
@@ -64,7 +65,7 @@ class SerpDLXConsumer:
             )
             self.channel = await self.connection.channel()
             # Process multiple messages for efficiency
-            await self.channel.set_qos(prefetch_count=100)
+            await self.channel.set_qos(prefetch_count=self.BATCH_SIZE)
 
             # Declare the DLX queue (consume from)
             self.queue = await self.channel.declare_queue(
@@ -91,6 +92,11 @@ class SerpDLXConsumer:
 
     async def disconnect(self) -> None:
         """Close RabbitMQ connection."""
+        # Process any remaining batch before disconnecting
+        if self._batch:
+            logger.info(f"Processing remaining {len(self._batch)} queries before shutdown")
+            await self._process_batch()
+
         try:
             await self.rabbitmq_helper.close()
         except Exception as e:
@@ -100,92 +106,128 @@ class SerpDLXConsumer:
             await self.connection.close()
             logger.info("Disconnected from RabbitMQ")
 
-    def _calculate_retry_delay(self, retry_count: int) -> int:
+    async def _collect_message(self, message: AbstractIncomingMessage) -> None:
         """
-        Calculate retry delay using exponential backoff.
+        Collect incoming message into the batch.
 
         Args:
-            retry_count: Current retry count
-
-        Returns:
-            Delay in seconds (capped at max_retry_delay_seconds)
+            message: Incoming RabbitMQ message
         """
-        delay = min(
-            self.retry_delay_seconds * (2 ** min(retry_count - 1, 5)),
-            self.max_retry_delay_seconds
-        )
-        return delay
+        try:
+            message_data = json.loads(message.body.decode())
 
-    async def _consume_message(self, message: AbstractIncomingMessage) -> None:
-        """
-        Handle incoming message from serp_req_dlx_queue.
+            async with self._batch_lock:
+                self._batch.append(message_data)
+                self._batch_messages.append(message)
+                current_batch_size = len(self._batch)
 
-        Waits for delay and then republishes individual query to serp_req_queue.
-        Implements infinite retry - never gives up.
-        """
-        async with message.process():
-            try:
-                message_data = json.loads(message.body.decode())
+            logger.debug(
+                f"DLX collected query {message_data.get('query_id', 'unknown')}, "
+                f"batch size: {current_batch_size}/{self.BATCH_SIZE}"
+            )
+
+            # Process batch if full
+            if current_batch_size >= self.BATCH_SIZE:
+                logger.info(f"DLX batch full ({self.BATCH_SIZE} queries), processing immediately...")
+                await self._process_batch()
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error in DLX: {e}")
+            await message.ack()
+
+        except Exception as e:
+            logger.error(f"Error collecting DLX message: {e}")
+            await message.nack(requeue=True)
+
+    async def _process_batch(self) -> None:
+        """Process the current batch - IMMEDIATELY republish all without any delay."""
+        async with self._batch_lock:
+            if not self._batch or self._processing:
+                return
+
+            self._processing = True
+            batch_data = self._batch.copy()
+            batch_messages = self._batch_messages.copy()
+            self._batch.clear()
+            self._batch_messages.clear()
+
+        try:
+            if not batch_data:
+                return
+
+            logger.info(f"DLX republishing {len(batch_data)} queries IMMEDIATELY")
+
+            # Republish all messages in parallel - NO DELAY
+            publish_tasks = []
+            for message_data, original_msg in zip(batch_data, batch_messages):
                 retry_count = message_data.get("_retry_count", 1)
-                last_error = message_data.get("_last_error", "Unknown")
-                query_id = message_data.get("query_id", "unknown")
 
-                logger.debug(
-                    f"DLX received query {query_id} (retry #{retry_count}), error: {last_error}"
-                )
-
-                # Calculate and apply retry delay
-                delay = self._calculate_retry_delay(retry_count)
-                logger.debug(f"Waiting {delay}s before retry #{retry_count + 1}...")
-                await asyncio.sleep(delay)
-
-                # Prepare message for retry (individual query)
                 retry_message = {
                     "query": message_data.get("query"),
                     "query_id": message_data.get("query_id"),
                     "_retry_count": retry_count,
-                    "_last_error": last_error
+                    "_last_error": message_data.get("_last_error", "Unknown")
                 }
 
-                # Publish back to request queue
-                published = await self.rabbitmq_helper.publish_message(
-                    queue_name=self.SERP_REQ_QUEUE,
-                    message=retry_message,
-                    priority=3,  # Lower priority for retries
-                    ensure_queue=True
+                publish_tasks.append(
+                    self._republish_and_ack(retry_message, original_msg, retry_count)
                 )
 
-                if published:
-                    logger.debug(
-                        f"↻ Query {query_id} republished to {self.SERP_REQ_QUEUE} "
-                        f"(retry #{retry_count + 1})"
-                    )
-                else:
-                    logger.error(f"Failed to republish query {query_id}")
-                    # Re-publish to DLX for another attempt
-                    await self.rabbitmq_helper.publish_message(
-                        queue_name=self.SERP_REQ_DLX_QUEUE,
-                        message=retry_message,
-                        priority=3,
-                        ensure_queue=True
-                    )
+            # Execute all republishes concurrently
+            await asyncio.gather(*publish_tasks)
 
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON decode error in DLX consumer: {e}")
-                logger.warning("Discarding malformed message")
+            logger.info(f"↻ DLX republished {len(batch_data)} queries to {self.SERP_REQ_QUEUE}")
 
-            except Exception as e:
-                logger.error(f"Unexpected error in DLX consumer: {e}")
+        except Exception as e:
+            logger.error(f"Error processing DLX batch: {e}")
+            # Nack all messages for requeue
+            for msg in batch_messages:
                 try:
-                    message_data = json.loads(message.body.decode())
-                    await self.rabbitmq_helper.publish_message(
-                        queue_name=self.SERP_REQ_DLX_QUEUE,
-                        message=message_data,
-                        priority=3,
-                        ensure_queue=True
-                    )
-                except Exception as requeue_error:
-                    logger.error(f"Failed to requeue message: {requeue_error}")
+                    await msg.nack(requeue=True)
+                except Exception:
+                    pass
+        finally:
+            self._processing = False
+
+    async def _republish_and_ack(
+        self,
+        retry_message: Dict[str, Any],
+        original_msg: AbstractIncomingMessage,
+        retry_count: int
+    ) -> None:
+        """Republish a single message and ack the original."""
+        try:
+            published = await self.rabbitmq_helper.publish_message(
+                queue_name=self.SERP_REQ_QUEUE,
+                message=retry_message,
+                priority=3,  # Lower priority for retries
+                ensure_queue=True
+            )
+
+            if published:
+                await original_msg.ack()
+                logger.debug(
+                    f"↻ Query {retry_message.get('query_id')} republished (retry #{retry_count + 1})"
+                )
+            else:
+                await original_msg.nack(requeue=True)
+                logger.error(f"Failed to republish query {retry_message.get('query_id')}")
+
+        except Exception as e:
+            logger.error(f"Error republishing query {retry_message.get('query_id')}: {e}")
+            await original_msg.nack(requeue=True)
+
+    async def _batch_timeout_handler(self) -> None:
+        """Periodically process incomplete batches after timeout."""
+        while True:
+            await asyncio.sleep(self.BATCH_TIMEOUT_SECONDS)
+
+            async with self._batch_lock:
+                batch_size = len(self._batch)
+
+            if batch_size > 0 and not self._processing:
+                logger.info(f"DLX timeout, processing {batch_size} queries immediately")
+                await self._process_batch()
 
     async def start_consuming(self) -> None:
         """Start consuming messages from serp_req_dlx_queue."""
@@ -193,11 +235,20 @@ class SerpDLXConsumer:
             raise RuntimeError("Queue not initialized. Call connect() first.")
 
         logger.info(f"Starting to consume from: {self.SERP_REQ_DLX_QUEUE}")
-        logger.info("Mode: INFINITE RETRY (will retry individual queries until success)")
+        logger.info("Mode: IMMEDIATE RETRY (no delays)")
 
-        await self.queue.consume(self._consume_message)
+        # Start the timeout handler
+        timeout_task = asyncio.create_task(self._batch_timeout_handler())
+
+        await self.queue.consume(self._collect_message, no_ack=False)
 
         try:
             await asyncio.Future()
         except KeyboardInterrupt:
             logger.info("Received shutdown signal")
+        finally:
+            timeout_task.cancel()
+            try:
+                await timeout_task
+            except asyncio.CancelledError:
+                pass

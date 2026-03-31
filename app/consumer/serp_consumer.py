@@ -30,7 +30,7 @@ class SerpConsumer:
     SERP_REQ_DLX_QUEUE = "serp_req_dlx_queue"
 
     BATCH_SIZE = 100
-    BATCH_TIMEOUT_SECONDS = 5  # Max wait time to fill a batch
+    BATCH_TIMEOUT_SECONDS = 10  # Max wait time to fill a batch (increased for DLX retries)
     DEFAULT_SEARCH_TYPE = "google-web"
 
     def __init__(self, config: Any, serp_lambda_url: str = None, worker_id: str = None):

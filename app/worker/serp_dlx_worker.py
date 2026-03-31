@@ -1,7 +1,7 @@
 """Run SERP DLX Consumer as standalone service.
 
 This worker consumes from serp_req_dlx_queue and republishes failed messages
-back to serp_req_queue for retry. Implements infinite retry with exponential backoff.
+back to serp_req_queue for retry. IMMEDIATE mode - no delays.
 """
 
 import asyncio
@@ -31,26 +31,17 @@ async def main():
     logger.info("SERP DLX Worker Starting")
     logger.info("=" * 60)
     logger.info("Queue: serp_req_dlx_queue -> serp_req_queue")
-    logger.info("Mode: INFINITE RETRY")
+    logger.info("Mode: IMMEDIATE RETRY (no delays)")
     logger.info("=" * 60)
 
     config = get_base_config()
 
-    # Get retry configuration from environment
-    retry_delay = int(os.environ.get("SERP_DLX_RETRY_DELAY_SECONDS", "30"))
-    max_retry_delay = int(os.environ.get("SERP_DLX_MAX_RETRY_DELAY_SECONDS", "300"))
-
-    # Create consumer
-    consumer = SerpDLXConsumer(
-        config=config,
-        retry_delay_seconds=retry_delay,
-        max_retry_delay_seconds=max_retry_delay
-    )
+    # Create consumer (no delay parameters - immediate mode)
+    consumer = SerpDLXConsumer(config=config)
 
     try:
         # Connect and start consuming
         await consumer.connect()
-        logger.info(f"Retry delay: {retry_delay}s, Max delay: {max_retry_delay}s")
         await consumer.start_consuming()
 
     except (ConnectionError, RuntimeError, asyncio.TimeoutError) as e:
