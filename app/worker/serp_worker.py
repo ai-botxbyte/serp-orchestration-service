@@ -7,6 +7,7 @@ and routes responses to serp_response_queue (success) or serp_req_dlx_queue (fai
 import asyncio
 import sys
 import os
+import uuid
 
 # Add project root to Python path BEFORE importing app modules
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,16 +20,19 @@ from app.config.baseapp_config import get_base_config
 
 async def main():
     """Main entry point for SERP Consumer as standalone service."""
-    # Configure loguru for production
+    # Generate unique worker ID
+    worker_id = os.environ.get("WORKER_ID", str(uuid.uuid4())[:8])
+
+    # Configure loguru for production with worker ID
     logger.remove()
     logger.add(
         sys.stdout,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}",
+        format=f"{{time:YYYY-MM-DD HH:mm:ss}} | {{level}} | [Worker-{worker_id}] {{message}}",
         level="INFO"
     )
 
     logger.info("=" * 60)
-    logger.info("SERP Worker Starting")
+    logger.info(f"SERP Worker Starting - ID: {worker_id}")
     logger.info("=" * 60)
     logger.info("Queue: serp_req_queue -> serp_response_queue / serp_req_dlx_queue")
     logger.info("=" * 60)
@@ -41,10 +45,11 @@ async def main():
         getattr(config, 'SERP_LAMBDA_SERVICE_URL', 'http://localhost:8000')
     )
 
-    # Create consumer
+    # Create consumer with worker ID
     consumer = SerpConsumer(
         config=config,
-        serp_lambda_url=serp_lambda_url
+        serp_lambda_url=serp_lambda_url,
+        worker_id=worker_id
     )
 
     try:

@@ -1,7 +1,7 @@
 """SERP DLX Consumer - Consumes from serp_req_dlx_queue and retries to serp_req_queue.
 
 This consumer implements infinite retry logic - messages are continuously
-retried until they succeed.
+retried until they succeed. Handles individual query messages.
 """
 
 from __future__ import annotations
@@ -18,11 +18,12 @@ from app.helper.rabbitmq_helper import RabbitMQHelper
 
 class SerpDLXConsumer:
     """
-    SERP DLX Consumer - Handles failed messages and retries.
+    SERP DLX Consumer - Handles failed individual query messages and retries.
 
-    Consumes from: serp_req_dlx_queue
-    Retries to: serp_req_queue
+    Consumes from: serp_req_dlx_queue (individual queries)
+    Retries to: serp_req_queue (individual queries)
 
+    The SERP consumer will batch these individual queries before calling API.
     Implements infinite retry with configurable delay.
     """
 
@@ -41,7 +42,7 @@ class SerpDLXConsumer:
         Args:
             config: Configuration object
             retry_delay_seconds: Initial delay between retries (default: 30 seconds)
-            max_retry_delay_seconds: Maximum delay between retries (default: 300 seconds / 5 minutes)
+            max_retry_delay_seconds: Maximum delay between retries (default: 300 seconds)
         """
         self.config = config
         self.retry_delay_seconds = retry_delay_seconds
@@ -51,7 +52,7 @@ class SerpDLXConsumer:
         self.queue: Optional[aio_pika.Queue] = None
         self.rabbitmq_helper = RabbitMQHelper()
         logger.info(f"{self.__class__.__name__} initialized")
-        logger.info(f"Retry delay: {retry_delay_seconds}s, Max delay: {max_retry_delay_seconds}s")
+        logger.info(f"Retry delay: {retry_delay_seconds}s, Max: {max_retry_delay_seconds}s")
 
     async def connect(self) -> None:
         """Establish connection to RabbitMQ and declare all required queues."""
@@ -62,7 +63,8 @@ class SerpDLXConsumer:
                 blocked_connection_timeout=300,
             )
             self.channel = await self.connection.channel()
-            await self.channel.set_qos(prefetch_count=1)
+            # Process multiple messages for efficiency
+            await self.channel.set_qos(prefetch_count=100)
 
             # Declare the DLX queue (consume from)
             self.queue = await self.channel.declare_queue(
@@ -108,8 +110,6 @@ class SerpDLXConsumer:
         Returns:
             Delay in seconds (capped at max_retry_delay_seconds)
         """
-        # Exponential backoff: delay = base_delay * 2^(retry_count - 1)
-        # Capped at max_retry_delay_seconds
         delay = min(
             self.retry_delay_seconds * (2 ** min(retry_count - 1, 5)),
             self.max_retry_delay_seconds
@@ -120,30 +120,29 @@ class SerpDLXConsumer:
         """
         Handle incoming message from serp_req_dlx_queue.
 
-        Waits for delay and then republishes to serp_req_queue.
+        Waits for delay and then republishes individual query to serp_req_queue.
         Implements infinite retry - never gives up.
         """
         async with message.process():
             try:
-                # Parse message body
                 message_data = json.loads(message.body.decode())
                 retry_count = message_data.get("_retry_count", 1)
                 last_error = message_data.get("_last_error", "Unknown")
-                batch_id = message_data.get("batch_id") or message_data.get("data", {}).get("batch_id", "no-batch-id")
+                query_id = message_data.get("query_id", "unknown")
 
-                logger.info(
-                    f"DLX Consumer received message (retry #{retry_count}): {batch_id}"
+                logger.debug(
+                    f"DLX received query {query_id} (retry #{retry_count}), error: {last_error}"
                 )
-                logger.debug(f"Last error: {last_error}")
 
                 # Calculate and apply retry delay
                 delay = self._calculate_retry_delay(retry_count)
-                logger.info(f"Waiting {delay} seconds before retry #{retry_count + 1}...")
+                logger.debug(f"Waiting {delay}s before retry #{retry_count + 1}...")
                 await asyncio.sleep(delay)
 
-                # Prepare message for retry (keep retry metadata)
+                # Prepare message for retry (individual query)
                 retry_message = {
-                    **message_data,
+                    "query": message_data.get("query"),
+                    "query_id": message_data.get("query_id"),
                     "_retry_count": retry_count,
                     "_last_error": last_error
                 }
@@ -157,15 +156,12 @@ class SerpDLXConsumer:
                 )
 
                 if published:
-                    logger.info(
-                        f"↻ Message republished to {self.SERP_REQ_QUEUE} "
-                        f"(retry #{retry_count + 1}): {batch_id}"
+                    logger.debug(
+                        f"↻ Query {query_id} republished to {self.SERP_REQ_QUEUE} "
+                        f"(retry #{retry_count + 1})"
                     )
                 else:
-                    logger.error(
-                        f"Failed to republish to {self.SERP_REQ_QUEUE}, "
-                        f"message stays in DLX queue"
-                    )
+                    logger.error(f"Failed to republish query {query_id}")
                     # Re-publish to DLX for another attempt
                     await self.rabbitmq_helper.publish_message(
                         queue_name=self.SERP_REQ_DLX_QUEUE,
@@ -176,12 +172,10 @@ class SerpDLXConsumer:
 
             except json.JSONDecodeError as e:
                 logger.error(f"JSON decode error in DLX consumer: {e}")
-                # Discard malformed messages
                 logger.warning("Discarding malformed message")
 
             except Exception as e:
                 logger.error(f"Unexpected error in DLX consumer: {e}")
-                # Try to re-queue the message
                 try:
                     message_data = json.loads(message.body.decode())
                     await self.rabbitmq_helper.publish_message(
@@ -198,13 +192,11 @@ class SerpDLXConsumer:
         if not self.queue:
             raise RuntimeError("Queue not initialized. Call connect() first.")
 
-        logger.info(f"Starting to consume messages from: {self.SERP_REQ_DLX_QUEUE}")
-        logger.info("Mode: INFINITE RETRY (will retry until success)")
+        logger.info(f"Starting to consume from: {self.SERP_REQ_DLX_QUEUE}")
+        logger.info("Mode: INFINITE RETRY (will retry individual queries until success)")
 
-        # Start consuming
         await self.queue.consume(self._consume_message)
 
-        # Keep the consumer running indefinitely
         try:
             await asyncio.Future()
         except KeyboardInterrupt:

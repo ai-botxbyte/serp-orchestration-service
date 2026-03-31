@@ -30,7 +30,8 @@ class SerpOrchestrationService:
             self.config, 'SERP_LAMBDA_SERVICE_URL', 'http://localhost:8802'
         )
         self.search_endpoint = f"{self.serp_lambda_url}/api/v1/search"
-        self.timeout = httpx.Timeout(120.0, connect=30.0)
+        # Increased timeout for batch processing (100 queries can take time)
+        self.timeout = httpx.Timeout(600.0, connect=60.0)
         logger.info(f"SerpOrchestrationService initialized with URL: {self.serp_lambda_url}")
 
     def validate_search_request(self, message: dict) -> Dict[str, Any]:
@@ -139,6 +140,29 @@ class SerpOrchestrationService:
                 error=str(e)
             ) from e
 
+    def _is_query_successful(self, item: dict) -> bool:
+        """
+        Check if a single query result is successful.
+
+        Args:
+            item: Query result item
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not isinstance(item, dict):
+            return True
+
+        # Check for explicit failure indicators
+        if item.get("response") is False:
+            return False
+        if item.get("success") is False:
+            return False
+        if item.get("error"):
+            return False
+
+        return True
+
     def process_search_response(
         self,
         response: Any,
@@ -160,26 +184,48 @@ class SerpOrchestrationService:
         try:
             # Handle list response (multiple queries)
             if isinstance(response, list):
-                success = all(
-                    item.get("success", True) if isinstance(item, dict) else True
-                    for item in response
+                # Count successful and failed queries
+                successful_items = [item for item in response if self._is_query_successful(item)]
+                failed_items = [item for item in response if not self._is_query_successful(item)]
+
+                total = len(response)
+                success_count = len(successful_items)
+                fail_count = len(failed_items)
+
+                # Batch is successful only if ALL queries succeeded
+                batch_success = fail_count == 0
+
+                logger.info(
+                    f"Batch results: {success_count}/{total} succeeded, "
+                    f"{fail_count}/{total} failed"
                 )
+
                 return {
-                    "success": success,
+                    "success": batch_success,
                     "data": response,
-                    "batch_id": original_message.get("data", original_message).get("batch_id"),
+                    "successful_queries": successful_items,
+                    "failed_queries": failed_items,
+                    "success_count": success_count,
+                    "fail_count": fail_count,
+                    "total_count": total,
+                    "batch_id": original_message.get("batch_id"),
                     "original_request": original_message
                 }
 
             # Handle dict response
             if isinstance(response, dict):
+                # Check if response itself indicates failure
+                is_success = response.get("success", True)
+                if response.get("response") is False:
+                    is_success = False
+                if response.get("error"):
+                    is_success = False
+
                 return {
-                    "success": response.get("success", True),
+                    "success": is_success,
                     "data": response.get("data", response),
                     "error": response.get("error"),
-                    "batch_id": response.get("batch_id") or original_message.get(
-                        "data", original_message
-                    ).get("batch_id"),
+                    "batch_id": response.get("batch_id") or original_message.get("batch_id"),
                     "original_request": original_message
                 }
 
